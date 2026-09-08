@@ -5,3 +5,5 @@ Sampler for importing Oscilloscope Raw-Data in CSV-Format and reducing the datap
 - Input-/Output-filepath  is selectable.
 - Amount of samples can be selected.
 - the base of the time can be changed for simpler use with Latex-Tikz
+- select numbewr of decimalpoints
+- select start- /endtime
