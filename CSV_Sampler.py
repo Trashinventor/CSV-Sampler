@@ -1,5 +1,3 @@
-# by Moritz Rambold 09/2026
-
 import csv
 import math
 import tkinter as tk
@@ -163,6 +161,84 @@ def count_data_rows(
 
 
 # ============================================================
+# KANAL-SKALIERFAKTOREN
+# ============================================================
+
+def parse_channel_factors(text):
+    """
+    Liest optionale Skalierungsfaktoren für Kanäle.
+
+    Format:
+        C1=2
+        C2=0.5
+        C3=1e-3
+
+    Mehrere Angaben können auch durch Komma oder Semikolon getrennt
+    werden, z.B.:
+        C1=2, C2=0.5, C3=1.2
+
+    Nicht angegebene Kanäle bleiben bei Faktor 1.
+    """
+
+    factors = {}
+
+    text = text.strip()
+
+    if not text:
+        return factors
+
+    entries = text.replace(";", ",").split(",")
+
+    for entry in entries:
+        entry = entry.strip()
+
+        if not entry:
+            continue
+
+        if "=" not in entry:
+            raise ValueError(
+                f'Ungültige Kanal-Skalierung: "{entry}"\\n\\n'
+                "Erwartetes Format: C1=2, C2=0.5, C3=1e-3"
+            )
+
+        channel, factor_text = entry.split("=", 1)
+
+        channel = channel.strip().upper()
+        factor_text = factor_text.strip()
+
+        if not channel:
+            raise ValueError("Bei einer Kanal-Skalierung fehlt der Kanalname.")
+
+        if not factor_text:
+            raise ValueError(
+                f'Für Kanal "{channel}" fehlt der Skalierungsfaktor.'
+            )
+
+        # C1, C2, ... sind die Kanalnamen; TIME wird nicht hier skaliert.
+        if not (channel.startswith("C") and channel[1:].isdigit()):
+            raise ValueError(
+                f'Ungültiger Kanalname "{channel}".\\n\\n'
+                "Erlaubt sind z.B. C1, C2, C3 ..."
+            )
+
+        try:
+            factor = float(factor_text)
+        except ValueError:
+            raise ValueError(
+                f'Der Skalierungsfaktor für "{channel}" muss eine Zahl sein.'
+            )
+
+        if not math.isfinite(factor):
+            raise ValueError(
+                f'Der Skalierungsfaktor für "{channel}" muss endlich sein.'
+            )
+
+        factors[channel] = factor
+
+    return factors
+
+
+# ============================================================
 # CSV VERARBEITEN
 # ============================================================
 
@@ -172,9 +248,17 @@ def process_csv(
     desired_samples,
     time_factor,
     decimal_places,
+    channel_factors=None,
     start_time=None,
     end_time=None
 ):
+
+    # --------------------------------------------------------
+    # Kanal-Skalierungsfaktoren
+    # --------------------------------------------------------
+
+    if channel_factors is None:
+        channel_factors = {}
 
     # --------------------------------------------------------
     # Header suchen
@@ -266,6 +350,8 @@ def process_csv(
 
                 if line_number == header_line:
 
+                    header_row = row[:]
+
                     writer.writerow(row)
 
                     continue
@@ -341,18 +427,50 @@ def process_csv(
                     )
 
                     # ----------------------------------------
-                    # Alle weiteren Spalten formatieren
+                    # Alle weiteren Spalten:
+                    # formatieren und optional skalieren
                     # ----------------------------------------
 
                     for column in range(
                         1,
                         len(row)
                     ):
-
-                        row[column] = format_number(
-                            row[column],
-                            decimal_places
+                        channel_name = (
+                            header_row[column].strip().upper()
+                            if column < len(header_row)
+                            else ""
                         )
+
+                        scale = channel_factors.get(
+                            channel_name,
+                            1.0
+                        )
+
+                        if (
+                            scale != 1.0
+                            and row[column].strip()
+                        ):
+                            try:
+                                channel_value = float(
+                                    row[column].strip()
+                                )
+
+                                row[column] = format_number(
+                                    str(channel_value * scale),
+                                    decimal_places
+                                )
+
+                            except ValueError:
+                                # Nicht-numerische Werte unverändert lassen.
+                                row[column] = format_number(
+                                    row[column],
+                                    decimal_places
+                                )
+                        else:
+                            row[column] = format_number(
+                                row[column],
+                                decimal_places
+                            )
 
                     # ----------------------------------------
                     # Zeile schreiben
@@ -528,6 +646,10 @@ def start_processing():
         decimal_places_entry.get().strip()
     )
 
+    channel_factors_text = (
+        channel_factors_entry.get().strip()
+    )
+
     # ========================================================
     # EINGABEDATEI PRÜFEN
     # ========================================================
@@ -682,6 +804,21 @@ def start_processing():
         return
 
     # ========================================================
+    # KANAL-SKALIERUNGEN
+    # ========================================================
+
+    try:
+        channel_factors = parse_channel_factors(
+            channel_factors_text
+        )
+    except ValueError as error:
+        messagebox.showerror(
+            "Fehler",
+            str(error)
+        )
+        return
+
+    # ========================================================
     # ZEITBEREICH
     # ========================================================
 
@@ -811,6 +948,7 @@ def start_processing():
             desired_samples,
             time_factor,
             decimal_places,
+            channel_factors,
             start_time,
             end_time
         )
@@ -877,6 +1015,8 @@ def start_processing():
         f"{time_factor:g}\n"
         f"Nachkommastellen:    "
         f"{decimal_places}\n"
+        f"Kanal-Skalierungen:  "
+        f"{', '.join(f'{channel}={factor:g}' for channel, factor in channel_factors.items()) if channel_factors else 'keine (alle = 1)'}\n"
         "\n"
         "Zeitbereich basiert auf TIME "
         "nach Anwendung des TIME-Faktors.\n"
@@ -1193,6 +1333,51 @@ decimal_places_entry.insert(
 tk.Label(
     decimal_places_frame,
     text="gilt für alle numerischen Spalten",
+    font=("Arial", 9),
+    fg="gray"
+).pack(
+    side="left",
+    padx=5
+)
+
+
+# ============================================================
+# KANAL-SKALIERUNGEN
+# ============================================================
+
+channel_factors_frame = tk.Frame(
+    main_frame
+)
+
+channel_factors_frame.pack(
+    fill="x",
+    pady=6
+)
+
+tk.Label(
+    channel_factors_frame,
+    text="Kanal-Skalierung:",
+    width=20,
+    anchor="w",
+    font=("Arial", 11)
+).pack(
+    side="left"
+)
+
+channel_factors_entry = tk.Entry(
+    channel_factors_frame,
+    width=55,
+    font=("Arial", 11)
+)
+
+channel_factors_entry.pack(
+    side="left",
+    padx=10
+)
+
+tk.Label(
+    channel_factors_frame,
+    text="z.B. C1=2, C2=0.5, C3=1e-3 (leer = alle 1)",
     font=("Arial", 9),
     fg="gray"
 ).pack(
